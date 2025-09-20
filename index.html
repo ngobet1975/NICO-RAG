@@ -5,14 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>NICO-RAG — Page de démarrage</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-    header { display: flex; align-items: center; gap: 12px; }
-    .chip { padding: 4px 10px; border-radius: 999px; background:#eef; font-size: 12px; }
-    pre { background:#f7f7f7; padding:12px; border-radius:8px; overflow:auto; }
-    button { padding:10px 14px; border-radius:8px; border:1px solid #ddd; cursor:pointer; }
-    .row { display:flex; gap:16px; flex-wrap:wrap; }
-    .card { flex:1 1 420px; border:1px solid #e6e6e6; border-radius:12px; padding:16px; }
-    footer { margin-top:32px; color:#666; font-size:12px; }
+    :root{--bd:#e6e6e6;--bg:#f7f7f7;}
+    *{box-sizing:border-box}
+    body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;margin:24px;color:#1a1a1a}
+    header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+    h1{margin:0}
+    .chip{padding:4px 10px;border-radius:999px;background:#eef;font-size:12px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    @media (max-width:1000px){.grid{grid-template-columns:1fr}}
+    .card{border:1px solid var(--bd);border-radius:12px;padding:16px;background:white}
+    pre{background:var(--bg);padding:12px;border-radius:8px;overflow:auto;max-height:380px}
+    button{padding:10px 14px;border-radius:8px;border:1px solid var(--bd);cursor:pointer;background:white}
+    button.primary{background:#f4f6ff;border-color:#c9d0ff}
+    footer{margin-top:22px;color:#666;font-size:12px}
+    code{background:#fafafa;padding:0 4px;border-radius:4px}
   </style>
 </head>
 <body>
@@ -22,23 +28,24 @@
     <span class="chip">MSAL → API</span>
   </header>
 
-  <div class="row">
+  <div class="grid">
     <section class="card">
       <h2>Identité (/.auth/me)</h2>
-      <p>Vous êtes connecté via Microsoft Entra ID. Les informations ci-dessous proviennent de <code>/.auth/me</code> (SWA).</p>
+      <p>Vous êtes connecté via Microsoft Entra ID. Les infos ci-dessous viennent de <code>/.auth/me</code> (SWA).</p>
       <pre id="me">Chargement…</pre>
-      <div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button onclick="location.href='/.auth/logout'">Se déconnecter</button>
+        <button class="primary" id="btnReloadMe">Rafraîchir</button>
       </div>
     </section>
 
     <section class="card">
       <h2>Appel API protégé</h2>
       <p>La SPA obtient un jeton via <strong>MSAL</strong> avec le scope :
-        <code>api://d4663603-4c77-4acf-95f3-c1f5d0390ae1/user_impersonation</code>, puis appelle l’API.</p>
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button id="btnCall">Tester l’appel API</button>
-        <button id="btnClear" style="background:#fafafa">Nettoyer</button>
+        <code>api://d4663603-4c77-4acf-95f3-c1f5d0390ae1/user_impersonation</code> puis appelle l’API.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="primary" id="btnCall">Tester l’appel API</button>
+        <button id="btnClear">Nettoyer</button>
       </div>
       <pre id="api">En attente…</pre>
     </section>
@@ -48,73 +55,82 @@
     POC France Central · SWA authentifiée · API App Service protégée (Easy Auth) · OBO Graph à venir.
   </footer>
 
-  <!-- MSAL -->
-  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <!-- Chargement MSAL avec fallback CDN -->
   <script>
-    // --- CONFIG À JOUR (confirmées) ---
-    const TENANT_ID   = "6bcca42d-d01b-4e42-be4b-2f55074eaa0d";
-    const SPA_CLIENT_ID = "37a06db0-7d71-495c-8744-f0977fc82f2e";
-    const SCOPE_API   = "api://d4663603-4c77-4acf-95f3-c1f5d0390ae1/user_impersonation";
-    const API_BASE    = "https://api-nico-rag.azurewebsites.net";
-
-    // --- SWA identity (/.auth/me) ---
-    fetch("/.auth/me").then(r=>r.json()).then(d=>{
-      document.getElementById("me").textContent = JSON.stringify(d, null, 2);
-    }).catch(err=>{
-      document.getElementById("me").textContent = "Erreur /.auth/me: " + err;
-    });
-
-    // --- MSAL setup ---
-    const msalInstance = new msal.PublicClientApplication({
-      auth: {
-        clientId: SPA_CLIENT_ID,
-        authority: `https://login.microsoftonline.com/${TENANT_ID}`,
-        redirectUri: window.location.origin
-      },
-      cache: { cacheLocation: "sessionStorage" }
-    });
-
-    async function ensureLogin() {
-      const accts = msalInstance.getAllAccounts();
-      if (accts.length === 0) {
-        const login = await msalInstance.loginPopup({ scopes: [SCOPE_API] });
-        msalInstance.setActiveAccount(login.account);
-        return login.account;
-      } else {
-        msalInstance.setActiveAccount(accts[0]);
-        return accts[0];
-      }
+    function loadScript(src){
+      return new Promise((res,rej)=>{
+        const s=document.createElement('script'); s.src=src; s.async=true;
+        s.onload=res; s.onerror=()=>rej(new Error('Échec de chargement: '+src));
+        document.head.appendChild(s);
+      });
     }
-
-    async function getToken() {
-      await ensureLogin();
-      const req = { scopes: [SCOPE_API], account: msalInstance.getActiveAccount() };
-      try {
-        const res = await msalInstance.acquireTokenSilent(req);
-        return res.accessToken;
-      } catch {
-        const res = await msalInstance.acquireTokenPopup(req);
-        return res.accessToken;
+    (async () => {
+      try { await loadScript("https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"); }
+      catch(e1){ console.warn("MSAL CDN #1 KO → fallback jsDelivr", e1);
+        await loadScript("https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js");
       }
-    }
+      startApp();
+    })();
+    function show(id, msg){ const el=document.getElementById(id); if(el) el.textContent = msg; }
+    window.onerror = (_,src,lin,col,err)=>{ show("api", "Erreur JS: "+(err?.message||(`${src}:${lin}`))); };
+  </script>
 
-    async function callApi() {
-      const out = document.getElementById("api");
-      out.textContent = "Appel en cours…";
-      try {
-        const token = await getToken();
-        const r = await fetch(`${API_BASE}/`, { headers: { Authorization: "Bearer " + token } });
-        const text = await r.text();
-        out.textContent = `API status: ${r.status} ${r.statusText}\n` + text.slice(0, 2000);
-      } catch (e) {
-        out.textContent = "Erreur appel API: " + e;
+  <script>
+    // ======= CONFIG (confirmée) =======
+    const TENANT_ID      = "6bcca42d-d01b-4e42-be4b-2f55074eaa0d";
+    const SPA_CLIENT_ID  = "37a06db0-7d71-495c-8744-f0977fc82f2e";
+    const SCOPE_API      = "api://d4663603-4c77-4acf-95f3-c1f5d0390ae1/user_impersonation";
+    const API_BASE       = "https://api-nico-rag.azurewebsites.net";
+
+    // ======= App =======
+    function startApp(){
+      if(!window.msal){ show("api","MSAL introuvable (réseau/filtrage)."); return; }
+
+      // /.auth/me (identité SWA)
+      async function loadMe(){
+        try{ const d = await (await fetch("/.auth/me")).json();
+             document.getElementById("me").textContent = JSON.stringify(d,null,2);
+        }catch(e){ show("me","Erreur /.auth/me: "+e); }
       }
-    }
+      loadMe();
+      document.getElementById("btnReloadMe")?.addEventListener("click", loadMe);
 
-    document.getElementById("btnCall").addEventListener("click", callApi);
-    document.getElementById("btnClear").addEventListener("click", ()=>{ document.getElementById("api").textContent = "En attente…"; });
-    // Lancer 1er test automatiquement (tu peux commenter la ligne suivante si tu préfères cliquer)
-    // callApi();
+      // MSAL
+      const msalInstance = new msal.PublicClientApplication({
+        auth: { clientId: SPA_CLIENT_ID, authority: `https://login.microsoftonline.com/${TENANT_ID}`, redirectUri: window.location.origin },
+        cache:{ cacheLocation:"sessionStorage" }
+      });
+
+      async function ensureLogin(){
+        const accts = msalInstance.getAllAccounts();
+        if(accts.length===0){
+          const login = await msalInstance.loginPopup({ scopes:[SCOPE_API] });
+          msalInstance.setActiveAccount(login.account);
+          return login.account;
+        }
+        msalInstance.setActiveAccount(accts[0]); return accts[0];
+      }
+
+      async function getToken(){
+        await ensureLogin();
+        const req = { scopes:[SCOPE_API], account: msalInstance.getActiveAccount() };
+        try { return (await msalInstance.acquireTokenSilent(req)).accessToken; }
+        catch { return (await msalInstance.acquireTokenPopup(req)).accessToken; }
+      }
+
+      async function callApi(){
+        show("api","Appel en cours…");
+        try{
+          const token = await getToken();
+          const r = await fetch(`${API_BASE}/`, { headers:{ Authorization:`Bearer ${token}` }});
+          const txt = await r.text();
+          show("api", `API status: ${r.status} ${r.statusText}\n`+txt.slice(0,2000));
+        }catch(e){ show("api","Erreur appel API: "+e); }
+      }
+
+      document.getElementById("btnCall")?.addEventListener("click", callApi);
+      document.getElementById("btnClear")?.addEventListener("click", ()=>show("api","En attente…"));
+    }
   </script>
 </body>
 </html>
