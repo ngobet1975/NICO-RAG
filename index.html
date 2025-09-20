@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Chat IA — POC</title>
+</head>
+<body>
+  <h1>Bienvenue 👋</h1>
+  <p>Vous êtes connecté via Microsoft Entra ID.</p>
+  <pre id="me">Chargement de votre identité...</pre>
+  <button onclick="location.href='/.auth/logout'">Se déconnecter</button>
+  <script>
+    fetch('/.auth/me').then(r=>r.json()).then(d=>{
+      document.getElementById('me').textContent = JSON.stringify(d, null, 2);
+    }).catch(()=>{ document.getElementById('me').textContent='(impossible de lire /.auth/me)'; });
+  </script>
+</body>
+</html>
