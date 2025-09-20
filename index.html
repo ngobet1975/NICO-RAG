@@ -19,6 +19,15 @@
     button.primary{background:#f4f6ff;border-color:#c9d0ff}
     footer{margin-top:22px;color:#666;font-size:12px}
     code{background:#fafafa;padding:0 4px;border-radius:4px}
+    /* mini styles chat */
+    #chatLog{border:1px solid var(--bd);border-radius:10px;background:#fafafa;height:320px;overflow:auto;padding:10px;white-space:pre-wrap}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .bubble{display:inline-block;max-width:80%;padding:8px 12px;border:1px solid var(--bd);border-radius:12px;margin:6px 0}
+    .me{background:#e8f2ff}
+    .bot{background:#fff}
+    .who{opacity:.6;font-size:.8rem;margin-bottom:2px}
+    #chatInput{flex:1;padding:10px;border:1px solid var(--bd);border-radius:10px}
+    #sendBtn{background:#2563eb;color:#fff;border-color:#2563eb}
   </style>
 </head>
 <body>
@@ -33,7 +42,7 @@
       <h2>Identité (/.auth/me)</h2>
       <p>Vous êtes connecté via Microsoft Entra ID. Les infos ci-dessous viennent de <code>/.auth/me</code> (SWA).</p>
       <pre id="me">Chargement…</pre>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <div class="row">
         <button onclick="location.href='/.auth/logout'">Se déconnecter</button>
         <button class="primary" id="btnReloadMe">Rafraîchir</button>
       </div>
@@ -43,13 +52,28 @@
       <h2>Appel API protégé</h2>
       <p>La SPA obtient un jeton via <strong>MSAL</strong> avec le scope :
         <code>api://d4663603-4c77-4acf-95f3-c1f5d0390ae1/user_impersonation</code> puis appelle l’API.</p>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <div class="row">
         <button class="primary" id="btnCall">Tester l’appel API</button>
         <button id="btnClear">Nettoyer</button>
       </div>
       <pre id="api">En attente…</pre>
     </section>
   </div>
+
+  <!-- === Nouveau : Chat Azure OpenAI (sous le contenu existant) === -->
+  <section class="card" style="margin-top:16px">
+    <h2>Chat Azure OpenAI</h2>
+    <p>Cette zone envoie vos messages à l’API (<code>/chat</code>) avec un jeton MSAL. Le backend appelle votre déploiement Azure OpenAI.</p>
+    <div id="chatLog"></div>
+    <div class="row" style="margin-top:10px">
+      <input id="chatInput" placeholder="Posez une question (ex : « Mon agenda cette semaine ? »)"/>
+      <button id="sendBtn">Envoyer</button>
+      <label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="includeProfile"/> Inclure mon profil Graph
+      </label>
+      <button id="clearChat">Effacer</button>
+    </div>
+  </section>
 
   <footer>
     POC France Central · SWA authentifiée · API App Service protégée (Easy Auth) · OBO Graph à venir.
@@ -82,14 +106,14 @@
     const SCOPE_API      = "api://d4663603-4c77-4acf-95f3-c1f5d0390ae1/user_impersonation";
     const API_BASE       = "https://api-nico-rag.azurewebsites.net";
 
-    // ======= App =======
     function startApp(){
       if(!window.msal){ show("api","MSAL introuvable (réseau/filtrage)."); return; }
 
       // /.auth/me (identité SWA)
       async function loadMe(){
-        try{ const d = await (await fetch("/.auth/me")).json();
-             document.getElementById("me").textContent = JSON.stringify(d,null,2);
+        try{
+          const d = await (await fetch("/.auth/me")).json();
+          document.getElementById("me").textContent = JSON.stringify(d,null,2);
         }catch(e){ show("me","Erreur /.auth/me: "+e); }
       }
       loadMe();
@@ -108,7 +132,8 @@
           msalInstance.setActiveAccount(login.account);
           return login.account;
         }
-        msalInstance.setActiveAccount(accts[0]); return accts[0];
+        msalInstance.setActiveAccount(accts[0]);
+        return accts[0];
       }
 
       async function getToken(){
@@ -118,6 +143,7 @@
         catch { return (await msalInstance.acquireTokenPopup(req)).accessToken; }
       }
 
+      // ======= Appel API protégé (bouton existant) =======
       async function callApi(){
         show("api","Appel en cours…");
         try{
@@ -127,9 +153,67 @@
           show("api", `API status: ${r.status} ${r.statusText}\n`+txt.slice(0,2000));
         }catch(e){ show("api","Erreur appel API: "+e); }
       }
-
       document.getElementById("btnCall")?.addEventListener("click", callApi);
       document.getElementById("btnClear")?.addEventListener("click", ()=>show("api","En attente…"));
+
+      // ======= Chat Azure OpenAI (nouveau) =======
+      const chatLog   = document.getElementById('chatLog');
+      const chatInput = document.getElementById('chatInput');
+      const sendBtn   = document.getElementById('sendBtn');
+      const clearChat = document.getElementById('clearChat');
+      const includeProfile = document.getElementById('includeProfile');
+
+      const thread = []; // [{role:'user'|'assistant', content:'...'}]
+
+      function escapeHtml(s){return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+      function addBubble(role, text){
+        const wrap = document.createElement('div');
+        wrap.style.display = 'flex';
+        wrap.style.justifyContent = role==='user' ? 'flex-end' : 'flex-start';
+        const b = document.createElement('div');
+        b.className = `bubble ${role==='user'?'me':'bot'}`;
+        b.innerHTML = `<div class="who">${role==='user'?'👤 vous':'🤖 assistant'}</div>${escapeHtml(text)}`;
+        wrap.appendChild(b);
+        chatLog.appendChild(wrap);
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+
+      async function sendChat(){
+        const text = (chatInput.value||"").trim();
+        if(!text) return;
+        chatInput.value = "";
+        thread.push({ role:"user", content:text });
+        addBubble('user', text);
+        addBubble('assistant', '…');
+
+        try{
+          const token = await getToken();
+          const r = await fetch(`${API_BASE}/chat`, {
+            method: "POST",
+            headers: {
+              "content-type":"application/json",
+              "authorization":"Bearer "+token
+            },
+            body: JSON.stringify({
+              messages: thread,
+              includeProfile: !!includeProfile.checked
+            })
+          });
+          const data = await r.json();
+          // remplace la bulle "…"
+          chatLog.lastChild.remove();
+          const answer = data?.message?.content || data?.reply || JSON.stringify(data);
+          thread.push({ role:"assistant", content: answer });
+          addBubble('assistant', answer);
+        }catch(e){
+          chatLog.lastChild.remove();
+          addBubble('assistant', `⚠️ Erreur: ${e}`);
+        }
+      }
+
+      sendBtn?.addEventListener('click', sendChat);
+      chatInput?.addEventListener('keydown', e => { if(e.key==='Enter') sendChat(); });
+      clearChat?.addEventListener('click', () => { thread.length = 0; chatLog.innerHTML = ""; });
     }
   </script>
 </body>
